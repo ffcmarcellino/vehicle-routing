@@ -1,11 +1,9 @@
-import multiprocessing as mp
-
-pool = mp.Pool(mp.cpu_count())
+import datetime
 
 class routingEnv():
 
     def __init__(self, params):
-        self.t = 0
+        self.t = params.initial_time
         self.origins = params.origins
         self.origin_types = params.origin_types
         self.product_types = params.product_types
@@ -19,7 +17,7 @@ class routingEnv():
         self.create_routes()
         self.run_vehicles()
         self.place_orders()
-        self.t += self.time_step
+        self.t += datetime.timedelta(minutes = self.time_step)
 
     def update_inventories(self):
         # origins = [id, type, x, y, p1, p2, p3, ..., pn]
@@ -30,6 +28,12 @@ class routingEnv():
             self.origins[product] = self.origins[product] * above + below * capacity
 
     def sample_orders(self):
+        # probabilidade de ter pedido no time_step
+        # região do pedido
+        # id do cliente (1 pedido por dia por cliente)
+        # qtde = f(horario)
+        # prazo aleatorio
+
         pass
 
     def create_routes(self):
