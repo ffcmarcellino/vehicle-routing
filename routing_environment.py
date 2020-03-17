@@ -1,4 +1,5 @@
 import datetime
+import numpy as np
 
 class routingEnv():
 
@@ -8,7 +9,12 @@ class routingEnv():
         self.origin_types = params.origin_types
         self.product_types = params.product_types
         self.update_margin = params.update_margin
-        # params
+        self.probs = params.probs
+        self.regions = params.regions
+        self.clients = params.clients
+        self.client_types = params.client_types
+        self.orders = params.orders
+        # self.clients region_id
 
     def advance(self):
 
@@ -28,13 +34,39 @@ class routingEnv():
             self.origins[product] = self.origins[product] * above + below * capacity
 
     def sample_orders(self):
-        # probabilidade de ter pedido no time_step
-        # região do pedido
-        # id do cliente (1 pedido por dia por cliente)
-        # qtde = f(horario)
-        # prazo aleatorio
+        num_products = len(product_types.keys())
 
-        pass
+        rand_order = np.random.random()
+        if rand_order >= self.probs["order"]:
+            return 0
+
+        order = dict()
+        order["order_id"] = self.orders.shape[0] + 1
+
+        region_id = np.random.choice(self.regions.keys(), self.probs["region"])
+        region = self.regions[region_id]
+
+        products = np.array(self.product_types.keys())
+        product_filter = np.less(np.random.random(num_products), self.probs["products"][region_id])
+        products = products[product_filter]
+
+        client_ids = self.clients.filter("region_id == @region_id").client_ids
+        client_id = np.random.choice(client_ids)
+        order["client_id"] = client_id
+
+        time_window = np.random.randint(low=1, high=23)
+        time_delta = np.random.randint(low=1 + time_window, high= 24)
+        order["window_end"] = self.t + datetime.timedelta(hours = time_delta)
+        order["window_start"] = self.t + datetime.timedelta(hours = time_delta - time_window)
+
+        for product in products:
+            std_qty = self.client_types[self.clients.filter("client_id == @client_id")["client_type"]]["std_qty"][product]
+            perc =  time_delta * (1-self.probs["min_qty_perc"]) / 23 + 24 * self.probs["min_qty_perc"] / 23
+            order[product] = (np.random.normal()*self.probs["std_dev_perc"] + 1) * std_qty * perc
+
+        order["status"] = 1
+
+        self.orders = self.orders.append(order, ignore_index=True)
 
     def create_routes(self):
         pass
