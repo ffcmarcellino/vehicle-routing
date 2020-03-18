@@ -26,7 +26,7 @@ class routingEnv():
         self.create_routes()
         self.start_routes()
         self.run_vehicles()
-        self.place_orders()
+        self.update_environment()
         self.t += datetime.timedelta(minutes = self.time_step)
 
     def refill_inventories(self):
@@ -54,7 +54,7 @@ class routingEnv():
         product_filter = np.less(np.random.random(num_products), self.probs["products"][region_id])
         products = products[product_filter]
 
-        client_ids = self.clients.filter("region_id == @region_id").client_ids # LEFT JOIN
+        client_ids = self.clients.filter("region_id == @region_id").client_ids
         client_id = np.random.choice(client_ids)
         order["client_id"] = client_id
 
@@ -64,7 +64,7 @@ class routingEnv():
         order["window_start"] = self.t + datetime.timedelta(hours = time_delta - time_window)
 
         for product in products:
-            std_qty = self.client_types[self.clients.filter("client_id == @client_id")["client_type"]]["std_qty"][product] #LEFT JOIN
+            std_qty = self.client_types[self.clients.filter("client_id == @client_id")["client_type"]]["std_qty"][product]
             perc =  time_delta * (1-self.probs["min_qty_perc"]) / 23 + 24 * self.probs["min_qty_perc"] / 23
             order[product] = (np.random.normal()*self.probs["std_dev_perc"] + 1) * std_qty * perc
 
@@ -76,6 +76,8 @@ class routingEnv():
         pass
 
     def start_routes(self):
+        #update route status
+
         #update vehicle status
         #update vehicle destination
         #update vehicle inventory
@@ -98,21 +100,26 @@ class routingEnv():
         self.vehicles.x = self.vehicles.x + x_speed * self.time_step
         self.vehicles.y = self.vehicles.y + y_speed * self.time_step
 
-    def place_orders(self):
+    def update_environment(self):
 
         has_arrived = self.vehicles.x == self.vehicles.x_dest and self.vehicles.y == self.vehicles.y_dest and self.vehicles.next_delivery != -1
 
-        join = self.vehicles.route_id.apply(lambda x: self.routes.filter(route_id == @x).route_plan) # LEFT JOIN
-        next_id = join.apply(lambda row: row.route_plan[row.next_delivery])
-        last_id = join.apply(lambda row: row.route_plan[-1])
+        merged_vehicles = pd.merge(self.vehicles, self.routes, on = "route_id", how = "left")[["next_delivery", "route_plan"]]
+        next_id = merged_vehicles.apply(lambda row: row.route_plan[row.next_delivery] if row.route_plan != 0 else 0)
+        last_id = merged_vehicles.apply(lambda row: row.route_plan[-1] if row.route_plan != 0 else 0)
 
-        not_origin = 1 * (next_id != last_id)
+        is_origin = (next_id == last_id)
+
         for product in self.product_types.keys():
-            self.vehicles[product] -= next_id.apply(lambda a: self.orders.filter(order_id == @a)[product] if a != 0 else 0) * has_arrived * not_origin # LEFT JOIN
+            qty = pd.merge(next_id, self.orders, on = "order_id", how = "left")[product]
+            qty = qty.fillna(0)
+            self.vehicles[product] -= qty * (1*(not is_origin and has_arrived))
 
-        client_ids = next_id.apply()self.vehicles.next_order_id.apply(lambda x: self.orders.filter(order_id == @x).client_id) # LEFT JOIN
-        bool = self.clients.client_id.apply(lambda x: x not in client_ids) * 1
-        self.clients.status *= bool
+        self.vehicles.next_delivery = self.vehicles.next_delivery * (1*(not has_arrived)) -1 * (1*(is_origin and has_arrived)) + (self.vehicles.next_delivery + 1) * (1*(not is_origin and has_arrived))
+        self.vehicles.route_id = self.vehicles.route_id * (1*(not is_origin or (is_origin and not has_arrived)))
+
+        order_ids = next_id[not is_origin and has_arrived]
+        self.orders.status *= self.orders.apply(lambda row: 1*(row.order_id not in order_ids))
 
     def render_environment(self):
         pass
