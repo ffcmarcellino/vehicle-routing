@@ -4,20 +4,6 @@ import numpy as np
 class routingEnv():
 
     def __init__(self, params):
-        self.t = params.initial_time
-        self.time_step = params.time_step
-        self.origins = params.origins
-        self.origin_types = params.origin_types
-        self.product_types = params.product_types
-        self.update_margin = params.update_margin
-        self.probs = params.probs
-        self.regions = params.regions
-        self.clients = params.clients
-        self.client_types = params.client_types
-        self.orders = params.orders
-        self.vehicle_types = params.vehicle_types
-        self.vehicles = params.vehicles
-        # self.clients region_id
 
     def advance(self):
 
@@ -63,10 +49,13 @@ class routingEnv():
         order["window_end"] = self.t + datetime.timedelta(hours = time_delta)
         order["window_start"] = self.t + datetime.timedelta(hours = time_delta - time_window)
 
-        for product in products:
-            std_qty = self.client_types[self.clients.filter("client_id == @client_id")["client_type"]]["std_qty"][product]
-            perc =  time_delta * (1-self.probs["min_qty_perc"]) / 23 + 24 * self.probs["min_qty_perc"] / 23
-            order[product] = (np.random.normal()*self.probs["std_dev_perc"] + 1) * std_qty * perc
+        for product in self.product_types.keys():
+            if product in products:
+                std_qty = self.client_types[self.clients.filter("client_id == @client_id")["client_type"]]["std_qty"][product]
+                perc =  time_delta * (1-self.probs["min_qty_perc"]) / 23 + 24 * self.probs["min_qty_perc"] / 23
+                order[product] = (np.random.normal()*self.probs["std_dev_perc"] + 1) * std_qty * perc
+            else:
+                order[product] = 0
 
         order["status"] = 1
 
@@ -76,13 +65,37 @@ class routingEnv():
         pass
 
     def start_routes(self):
-        #update route status
+        route_info = pd.merge(self.vehicles, self.routes, on = "route_id", how="left")["start_time", "route_plan"]
+        is_ready = route_info.start_time == self.t
+        is_parked = self.vehicles.next_delivery == -1
 
-        #update vehicle status
-        #update vehicle destination
-        #update vehicle inventory
-        #update origin inventory
-        pass
+        self.vehicles.next_delivery *= 1*(not is_ready)
+
+        products = list(self.product_types.keys())
+        next_ids = route_info.route_plan.apply(lambda x: x[0] if x==x else 0)
+        merged_order = pd.merge(next_ids, self.orders, on="order_id", how="left")[["client_id"] + products]
+
+        qty = merged_order[products]
+        qty = qty.fillna(0)
+        qty *= 1*(is_parked and is_ready)
+        self.vehicles[products] += qty
+
+        mod_vehicles = self.vehicles.copy()
+        mod_vehicles.origin_id *= 1*is_ready
+
+        qty = pd.merge(self.origins, mod_vehicles, on="origin_id", how="left")[products]
+        qty = qty.fillna(0)
+        qty *= 1*(is_parked and is_ready)
+        self.origins[products] -= qty
+
+        self.vehicles.origin_id *= 1*(not is_ready)
+
+        merged_df = pd.merge(merged_order, self.clients, on="client_id", how="left")[["x", "y"]]
+        merged_df = merged_df.fillna(0)
+        x_dest = merged_df.x
+        y_dest = merged_df.y
+        self.vehicles.x_dest = self.vehicles.x_dest * (1*(not is_ready)) + x_dest * (1*is_ready)
+        self.vehicles.y_dest = self.vehicles.y_dest * (1*(not is_ready)) + y_dest * (1*is_ready)
 
     def run_vehicles(self):
 
@@ -110,10 +123,10 @@ class routingEnv():
 
         is_origin = (next_id == last_id)
 
-        for product in self.product_types.keys():
-            qty = pd.merge(next_id, self.orders, on = "order_id", how = "left")[product]
-            qty = qty.fillna(0)
-            self.vehicles[product] -= qty * (1*(not is_origin and has_arrived))
+        products = self.product_types.keys()
+        qty = pd.merge(next_id, self.orders, on = "order_id", how = "left")[products]
+        qty = qty.fillna(0)
+        self.vehicles[products] -= qty * (1*(not is_origin and has_arrived))
 
         self.vehicles.next_delivery = self.vehicles.next_delivery * (1*(not has_arrived)) -1 * (1*(is_origin and has_arrived)) + (self.vehicles.next_delivery + 1) * (1*(not is_origin and has_arrived))
         self.vehicles.route_id = self.vehicles.route_id * (1*(not is_origin or (is_origin and not has_arrived)))
