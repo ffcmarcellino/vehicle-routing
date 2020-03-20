@@ -1,5 +1,6 @@
 import datetime
 import numpy as np
+import routingAlgo
 
 class routingEnv():
 
@@ -62,7 +63,17 @@ class routingEnv():
         self.orders = self.orders.append(order, ignore_index=True)
 
     def create_routes(self):
-        pass
+        vehicle_router = vehicleRouter(self.vehicles, )
+
+        vehicle_router.route_moving_inventory()
+        vehicle_router.assign_origins()
+        vehicle_router.vrptw_heuristic()
+        vehicle_router.assign_final_dest()
+
+        self.routes = vehicle_router.routes
+        self.vehicles = vehicle_router.vehicles
+
+        del vehicle_router
 
     def start_routes(self):
         route_info = pd.merge(self.vehicles, self.routes, on = "route_id", how="left")["start_time", "route_plan"]
